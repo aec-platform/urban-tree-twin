@@ -32,7 +32,7 @@
     "@fastify/swagger-ui": "^5.2.1",
     "@prisma/client": "^6.1.0",
     "@utt/shared": "workspace:*",
-    "argon2": "^0.41.1",
+    "argon2": "^0.44.0",
     "bullmq": "^5.34.5",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
