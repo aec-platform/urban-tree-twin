@@ -1,0 +1,370 @@
+// Urban Tree Twin — Prisma schema.
+// PostGIS geometry columns are managed via raw SQL migrations and exposed
+// here as Unsupported("geometry(Point,4326)"). Reads go through raw queries
+// that emit GeoJSON for the API layer.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis, pgcrypto, pg_trgm, btree_gist]
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  INSPECTOR
+  CREW
+  VIEWER
+}
+
+enum TreeStatus {
+  ALIVE
+  DEAD
+  REMOVED
+  STUMP
+  PLANNED
+  NEWLY_PLANTED
+}
+
+enum HealthClass {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  CRITICAL
+}
+
+enum RiskLevel {
+  LOW
+  MODERATE
+  HIGH
+  EXTREME
+}
+
+enum InspectionMethod {
+  VISUAL_GROUND
+  AERIAL_DRONE
+  CLIMBING
+  INSTRUMENT_RESI
+  AUTOMATED_IMAGE
+}
+
+enum ImageKind {
+  CANOPY
+  TRUNK
+  ROOT_FLARE
+  LEAF
+  DAMAGE
+  OTHER
+}
+
+enum PruneAction {
+  CROWN_CLEAN
+  CROWN_THIN
+  CROWN_RAISE
+  CROWN_REDUCE
+  POLLARD
+  DEADWOOD
+  STRUCTURAL
+  EMERGENCY
+  REMOVAL
+}
+
+enum ScheduleStatus {
+  DRAFT
+  PLANNED
+  DISPATCHED
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+model Tenant {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(120)
+  slug        String   @unique @db.VarChar(120)
+  plan        String   @default("trial") @db.VarChar(40)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  trees       Tree[]
+  zones       Zone[]
+  species     Species[]
+  inspections Inspection[]
+  images      TreeImage[]
+  risks       RiskAssessment[]
+  tasks       PruneTask[]
+  crews       Crew[]
+  events      AuditEvent[]
+
+  @@map("tenants")
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @db.Uuid
+  email          String    @db.VarChar(254)
+  fullName       String    @db.VarChar(120)
+  passwordHash   String    @db.VarChar(255)
+  role           UserRole  @default(VIEWER)
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  inspections    Inspection[]
+  refreshTokens  RefreshToken[]
+
+  @@unique([tenantId, email])
+  @@index([email])
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  tokenHash   String    @unique @db.VarChar(255)
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  userAgent   String?   @db.VarChar(255)
+  ipAddress   String?   @db.VarChar(64)
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Species {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String?  @db.Uuid
+  scientificName  String   @db.VarChar(160)
+  commonNameVi    String   @db.VarChar(160)
+  commonNameEn    String?  @db.VarChar(160)
+  family          String?  @db.VarChar(120)
+  nativeToVN      Boolean  @default(false)
+  failureProneness Float?
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trees           Tree[]
+
+  @@unique([tenantId, scientificName])
+  @@index([scientificName])
+  @@map("species")
+}
+
+/// Management zones (ward / route / industrial-park lot / private campus).
+/// `boundary` is a PostGIS geometry(Polygon,4326) populated via raw SQL.
+model Zone {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  name        String   @db.VarChar(160)
+  code        String?  @db.VarChar(40)
+  district    String?  @db.VarChar(120)
+  province    String?  @db.VarChar(120)
+  boundary    Unsupported("geometry(Polygon,4326)")?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trees       Tree[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, name])
+  @@map("zones")
+}
+
+/// Individual tree (the core entity of the digital twin).
+/// `geom` holds geometry(Point,4326); managed via raw SQL migration.
+model Tree {
+  id              String     @id @default(uuid()) @db.Uuid
+  tenantId        String     @db.Uuid
+  externalCode    String?    @db.VarChar(64)
+  speciesId       String?    @db.Uuid
+  zoneId          String?    @db.Uuid
+
+  geom            Unsupported("geometry(Point,4326)")
+  address         String?    @db.VarChar(255)
+  ward            String?    @db.VarChar(120)
+  district        String?    @db.VarChar(120)
+  province        String?    @db.VarChar(120)
+
+  plantedAt       DateTime?  @db.Date
+  heightM         Float?
+  dbhCm           Float?
+  canopyRadiusM   Float?
+
+  status          TreeStatus @default(ALIVE)
+  healthClass     HealthClass?
+  healthScore     Float?
+  riskScore       Float?
+  riskLevel       RiskLevel?
+  lastInspectedAt DateTime?
+
+  notes           String?    @db.Text
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  tenant          Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  species         Species?   @relation(fields: [speciesId], references: [id])
+  zone            Zone?      @relation(fields: [zoneId], references: [id])
+  inspections     Inspection[]
+  images          TreeImage[]
+  risks           RiskAssessment[]
+  tasks           PruneTask[]
+
+  @@unique([tenantId, externalCode])
+  @@index([tenantId, status])
+  @@index([tenantId, zoneId])
+  @@index([tenantId, healthClass])
+  @@map("trees")
+}
+
+model Inspection {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @db.Uuid
+  treeId           String           @db.Uuid
+  inspectorId      String?          @db.Uuid
+  performedAt      DateTime
+  method           InspectionMethod @default(VISUAL_GROUND)
+  healthClass      HealthClass?
+  healthScore      Float?
+  canopyDensityPct Float?
+  defects          Json?
+  notes            String?          @db.Text
+  createdAt        DateTime         @default(now())
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tree             Tree             @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  inspector        User?            @relation(fields: [inspectorId], references: [id])
+  images           TreeImage[]
+
+  @@index([tenantId, treeId, performedAt(sort: Desc)])
+  @@map("inspections")
+}
+
+model TreeImage {
+  id              String     @id @default(uuid()) @db.Uuid
+  tenantId        String     @db.Uuid
+  treeId          String     @db.Uuid
+  inspectionId    String?    @db.Uuid
+  kind            ImageKind  @default(OTHER)
+  storageKey      String     @db.VarChar(512)
+  contentType     String     @db.VarChar(80)
+  byteSize        Int
+  width           Int?
+  height          Int?
+  capturedAt      DateTime?
+  exifLat         Float?
+  exifLng         Float?
+
+  scoredAt        DateTime?
+  modelVersion    String?    @db.VarChar(60)
+  healthScore     Float?
+  healthClass     HealthClass?
+  canopyDensityPct Float?
+  defectsScore    Json?
+
+  createdAt       DateTime   @default(now())
+
+  tenant          Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tree            Tree       @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  inspection      Inspection? @relation(fields: [inspectionId], references: [id])
+
+  @@index([tenantId, treeId])
+  @@map("tree_images")
+}
+
+model RiskAssessment {
+  id                  String    @id @default(uuid()) @db.Uuid
+  tenantId            String    @db.Uuid
+  treeId              String    @db.Uuid
+  scenarioLabel       String?   @db.VarChar(80)
+  windGustMs          Float?
+  windSustainedMs     Float?
+  failureProbability  Float
+  impactScore         Float
+  riskScore           Float
+  riskLevel           RiskLevel
+  factors             Json
+  modelVersion        String    @db.VarChar(60)
+  assessedAt          DateTime  @default(now())
+
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tree                Tree      @relation(fields: [treeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, treeId, assessedAt(sort: Desc)])
+  @@index([tenantId, riskLevel])
+  @@map("risk_assessments")
+}
+
+model Crew {
+  id          String      @id @default(uuid()) @db.Uuid
+  tenantId    String      @db.Uuid
+  name        String      @db.VarChar(120)
+  lead        String?     @db.VarChar(120)
+  contact     String?     @db.VarChar(80)
+  createdAt   DateTime    @default(now())
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tasks       PruneTask[]
+
+  @@unique([tenantId, name])
+  @@map("crews")
+}
+
+model PruneTask {
+  id              String         @id @default(uuid()) @db.Uuid
+  tenantId        String         @db.Uuid
+  treeId          String         @db.Uuid
+  crewId          String?        @db.Uuid
+  action          PruneAction
+  priority        Int            @default(3)
+  scheduledFor    DateTime
+  estimatedHours  Float?
+  status          ScheduleStatus @default(DRAFT)
+  startedAt       DateTime?
+  completedAt     DateTime?
+  notes           String?        @db.Text
+  resultNotes     String?        @db.Text
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tree            Tree           @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  crew            Crew?          @relation(fields: [crewId], references: [id])
+
+  @@index([tenantId, status, scheduledFor])
+  @@index([tenantId, crewId, scheduledFor])
+  @@map("prune_tasks")
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  actorId     String?  @db.Uuid
+  action      String   @db.VarChar(80)
+  entity      String   @db.VarChar(80)
+  entityId    String?  @db.Uuid
+  metadata    Json?
+  ipAddress   String?  @db.VarChar(64)
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, entity, entityId])
+  @@map("audit_events")
+}

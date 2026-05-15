@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: utt
+          POSTGRES_PASSWORD: utt_dev_password
+          POSTGRES_DB: urban_tree_twin
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U utt -d urban_tree_twin"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+
+    env:
+      DATABASE_URL: postgresql://utt:utt_dev_password@localhost:5432/urban_tree_twin?schema=public
+      REDIS_URL: redis://localhost:6379/0
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: ap-southeast-1
+      S3_BUCKET: utt-uploads
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      JWT_SECRET: ci-jwt-secret-must-be-32-chars-or-more
+      PASSWORD_PEPPER: ci-pepper
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.10.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @utt/shared build
+
+      - name: Generate Prisma client
+        run: pnpm --filter @utt/api db:generate
+
+      - name: Run Prisma migrate (deploy)
+        run: pnpm --filter @utt/api db:migrate:deploy || pnpm --filter @utt/api exec prisma migrate dev --name init --skip-seed
+
+      - name: Apply post-deploy SQL (PostGIS indexes)
+        run: |
+          PGPASSWORD=utt_dev_password psql -h localhost -U utt -d urban_tree_twin -f apps/api/prisma/post-deploy.sql
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm --filter @utt/api test
+
+      - name: Build all
+        run: pnpm build
+
+  docker:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          tags: utt-api:ci
+
+      - name: Build Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          tags: utt-web:ci

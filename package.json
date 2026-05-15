@@ -1,0 +1,38 @@
+{
+  "name": "urban-tree-twin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Urban tree digital twin SaaS — GIS, image-based health scoring, fall-risk forecasting, and pruning schedules for municipal urban-greening operators.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./apps/*\" --filter \"./packages/*\" build",
+    "dev": "pnpm -r --parallel --filter \"./apps/*\" dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
+    "db:up": "docker compose up -d postgres redis",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @utt/api db:migrate",
+    "db:seed": "pnpm --filter @utt/api db:seed",
+    "prepare": "husky || true"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.4.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.4",
+    "typescript": "^5.7.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js}": ["prettier --write"],
+    "*.{json,md,yml,yaml}": ["prettier --write"]
+  }
+}
