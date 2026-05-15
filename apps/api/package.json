@@ -30,7 +30,7 @@
     "@fastify/sensible": "^6.0.2",
     "@fastify/swagger": "^9.4.0",
     "@fastify/swagger-ui": "^5.2.1",
-    "@prisma/client": "^6.1.0",
+    "@prisma/client": "^7.8.0",
     "@utt/shared": "workspace:*",
     "argon2": "^0.41.1",
     "bullmq": "^5.34.5",
