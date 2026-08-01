@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:25-alpine AS base
 WORKDIR /app
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
 RUN corepack enable
@@ -16,7 +16,7 @@ RUN pnpm --filter @utt/shared build
 RUN pnpm --filter @utt/api db:generate
 RUN pnpm --filter @utt/api build
 
-FROM node:20-alpine AS runner
+FROM node:25-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk add --no-cache tini
